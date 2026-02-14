@@ -303,4 +303,8 @@ contract DSCEngine is ReentrancyGuard {
         uint8 decimals = priceFeed.decimals();
         return ((uint256(price) * amount) / (10 ** decimals));
     }
+
+    function getAccountInformation(address user) external view returns (uint256 totalDscMinted, uint256 collateralValueInUsd) {
+        (totalDscMinted,collateralValueInUsd) = _getAccountInformation(user);
+    }
 }
