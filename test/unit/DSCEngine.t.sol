@@ -8,6 +8,7 @@ import {DecentralizedStableCoin} from '../../src/DecentralizedStableCoin.sol';
 import {HelperConfig} from '../../script/HelperConfig.s.sol';
 import {ERC20Mock} from '../mocks/ERC20Mock.sol';
 
+
 contract DSCEngineTest is Test {
     DSCEngine public dscEngine;
     DecentralizedStableCoin public dsc;
@@ -20,6 +21,12 @@ contract DSCEngineTest is Test {
     address public USER = makeAddr("user");
     uint256 public constant STARTING_BALANCE = 20 ether;
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
+
+    event CollateralDeposited(
+        address indexed user,
+        address indexed tokenCollateralAddress,
+        uint256 amountCollateral
+    );
 
 
     function setUp() external {
@@ -60,6 +67,10 @@ contract DSCEngineTest is Test {
         assertEq(actualEthAmount, expectedEthAmount);
     }
 
+    //////////////////////////////
+    ///// DEPOSIT COLLATERAL /////
+    ///////////////////////////////
+
     function testRevertIfDepositZeroCollateral() public {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(dscEngine), AMOUNT_COLLATERAL);
@@ -86,7 +97,6 @@ contract DSCEngineTest is Test {
 
     function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral{
 
-
         (uint256 totalDscMinted,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
 
         uint256 expectedDepoistAmount = dscEngine.getTokenAmountFromUsdValue(weth, collateralValueInUsd);
@@ -98,15 +108,137 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    // function testDepositCollateral() public {
-    //     uint256 collateralAmount = 1e18; // 1 ETH
-    //     // Give the test contract some WETH to work with
-    //     deal(weth, address(this), collateralAmount);
-    //     IERC20(weth).approve(address(dscEngine), collateralAmount);
+    function testCanDepoistAndGetContractBalance() public {
+        uint256 beforeBalance = ERC20Mock(weth).balanceOfInternal(address(dscEngine));
 
-    //     dscEngine.depositCollateral(weth, collateralAmount);
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dscEngine), AMOUNT_COLLATERAL);
+        dscEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
 
-    //     uint256 depositedCollateral = dscEngine.getCollateralBalance(address(this), weth);
-    //     assertEq(depositedCollateral, collateralAmount);
-    // }
+        uint256 afterBalnce = ERC20Mock(weth).balanceOfInternal(address(dscEngine));
+
+        assertEq(afterBalnce , beforeBalance + AMOUNT_COLLATERAL);
+    }
+
+    function testDepoitAndEmitEvent() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dscEngine), AMOUNT_COLLATERAL);
+
+        vm.expectEmit(true, true, true, true);
+        emit CollateralDeposited(USER, weth, AMOUNT_COLLATERAL);
+
+        dscEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    //////////////////////
+    ///// MINT DSC //////
+    ////////////////////
+
+    function testRevertIfMintWithZeroAmount() public{
+        vm.startPrank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__AmountMustBeAboveZero.selector);
+        dscEngine.mintDsc(0);
+        vm.stopPrank();
+    }
+
+
+    function testRevertIfMintMoreThanAllowed() public depositedCollateral{
+         vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        uint256 amountToMint = maxDscToMint + 1;
+
+        // The contract increments the user's DSC minted before checking health factor,
+        // so the revert will contain the health factor computed using `amountToMint`.
+        uint256 expectedHealthFactor = (maxDscToMint * 1e18) / amountToMint;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__HealthFactorTooLow.selector, expectedHealthFactor));
+        dscEngine.mintDsc(amountToMint);
+        vm.stopPrank();
+    }
+
+    function testMintDscAndGetAccountInfo() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        (uint256 totalDscMinted, ) = dscEngine.getAccountInformation(USER);
+        uint256 expectedTotalDscMinted = maxDscToMint;
+
+        assertEq(totalDscMinted, expectedTotalDscMinted);
+        vm.stopPrank();
+    }
+
+    function testMintDscAndGetUserTokenBalance() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        uint256 userDscBalance = DecentralizedStableCoin(dsc).balanceOf(USER);
+        assertEq(userDscBalance, maxDscToMint);
+        vm.stopPrank();
+    }
+
+    //////////////////////
+    ///// BURN DSC //////
+    ////////////////////
+
+    function testRevertIfBurnZeroAmount() public {
+        vm.startPrank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__AmountMustBeAboveZero.selector);
+        dscEngine.burnDsc(0);
+        vm.stopPrank();
+    }
+
+    function testRevertIfBurnMoreThanMinted() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        uint256 amountToBurn = maxDscToMint + 1;
+        vm.expectRevert();
+        dscEngine.burnDsc(amountToBurn);
+        vm.stopPrank();
+    }
+
+    function testBurnDscAndGetAccountInfo() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        uint256 amountToBurn = maxDscToMint / 2;
+
+        DecentralizedStableCoin(dsc).approve(address(dscEngine), amountToBurn);
+        dscEngine.burnDsc(amountToBurn);
+
+        (uint256 totalDscMintedAfterBurn, ) = dscEngine.getAccountInformation(USER);
+        uint256 expectedTotalDscMintedAfterBurn = maxDscToMint - amountToBurn;
+
+        assertEq(totalDscMintedAfterBurn, expectedTotalDscMintedAfterBurn);
+        vm.stopPrank();
+    }
+
+    function testBurnDscAndGetUserTokenBalance() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        uint256 amountToBurn = maxDscToMint / 2;
+
+        DecentralizedStableCoin(dsc).approve(address(dscEngine), amountToBurn);
+        dscEngine.burnDsc(amountToBurn);
+
+        uint256 contractDscBalance = DecentralizedStableCoin(dsc).balanceOf(USER);
+        assertEq(contractDscBalance, amountToBurn);
+        vm.stopPrank();
+    }
+
+
+
 }
