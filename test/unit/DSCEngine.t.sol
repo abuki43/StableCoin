@@ -19,11 +19,19 @@ contract DSCEngineTest is Test {
     address weth;
 
     address public USER = makeAddr("user");
+    address public USER2 = makeAddr("user2");
     uint256 public constant STARTING_BALANCE = 20 ether;
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
 
     event CollateralDeposited(
         address indexed user,
+        address indexed tokenCollateralAddress,
+        uint256 amountCollateral
+    );
+
+    event CollateralRedeemed(
+        address indexed redeemedFrom,
+        address indexed redeemedTo,
         address indexed tokenCollateralAddress,
         uint256 amountCollateral
     );
@@ -182,6 +190,7 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
+
     //////////////////////
     ///// BURN DSC //////
     ////////////////////
@@ -239,6 +248,129 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
+     //////////////////////////////
+    ///// Redeem colatteral //////
+   //////////////////////////////
 
+   function testRevertIfRedeemZeroCollateral() public {
+        vm.startPrank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__AmountMustBeAboveZero.selector);
+        dscEngine.redeemCollateral(weth, 0);
+        vm.stopPrank();
+    }
+
+    function testRedeemCollateralAndGetAccountInfo() public depositedCollateral{
+        vm.startPrank(USER);
+
+        dscEngine.redeemCollateral(weth, AMOUNT_COLLATERAL);
+
+        (,uint256 collateralValueInUsdAfter) = dscEngine.getAccountInformation(USER);
+
+        uint256 expectedCollateralValueAfter = 0;
+
+        assertEq(collateralValueInUsdAfter, expectedCollateralValueAfter);
+        vm.stopPrank();
+    }
+
+    function testRedeemCollateralAndGetContractBalance() public depositedCollateral{
+        uint256 beforeBalance = ERC20Mock(weth).balanceOfInternal(address(dscEngine));
+
+        vm.startPrank(USER);
+        dscEngine.redeemCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+
+        uint256 afterBalnce = ERC20Mock(weth).balanceOfInternal(address(dscEngine));
+
+        assertEq(afterBalnce , beforeBalance - AMOUNT_COLLATERAL);
+    }
+
+    function testRedeemCollateralAndEmitEvent() public depositedCollateral{
+        vm.startPrank(USER);
+
+        vm.expectEmit(true, true, true, true);
+        emit CollateralRedeemed(USER, USER, weth, AMOUNT_COLLATERAL);
+
+        dscEngine.redeemCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    function testRevertIfRedeemMoreCollateralThanDeposited() public depositedCollateral{
+        vm.startPrank(USER);
+        uint256 amountToRedeem = AMOUNT_COLLATERAL + 1;
+        vm.expectRevert();
+        dscEngine.redeemCollateral(weth, amountToRedeem);
+        vm.stopPrank();
+    }
+
+    function testRevertIfRedeemWithUnapprovedCollateral() public depositedCollateral{
+        vm.startPrank(USER);
+        ERC20Mock unapprovedToken = new ERC20Mock("unapproved", "UNAPPROVED", USER, AMOUNT_COLLATERAL);
+        uint256 amountToRedeem = 1 ether;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__NotAllowedToken.selector, address(unapprovedToken)));
+        dscEngine.redeemCollateral(address(unapprovedToken), amountToRedeem);
+        vm.stopPrank(); 
+    }
+
+    function testRevertIfRedeemCollateralThatWouldPutHealthFactorTooLow() public depositedCollateral{
+        vm.startPrank(USER);
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint);
+
+        uint256 amountToRedeem = AMOUNT_COLLATERAL / 2;
+
+        // DSCEngine decrements the user's collateral before checking health factor.....
+       
+        uint256 adjustedCollateralAfter = ((collateralValueInUsd - dscEngine.getUsdValue(weth, amountToRedeem)) * dscEngine.getLiuidationThreshold()) / 100;
+        uint256 expectedHealthFactor = (adjustedCollateralAfter * 1e18) / maxDscToMint;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__HealthFactorTooLow.selector, expectedHealthFactor));
+        dscEngine.redeemCollateral(weth, amountToRedeem);
+        vm.stopPrank();
+    }
+
+    function testCanDepositMintRedeemAndBurn() public {
+        vm.startPrank(USER);
+        // Deposit collateral
+        ERC20Mock(weth).approve(address(dscEngine), AMOUNT_COLLATERAL);
+        dscEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+
+        // Mint DSC
+        (,uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 maxDscToMint = (collateralValueInUsd * dscEngine.getLiuidationThreshold()) / 100; 
+        dscEngine.mintDsc(maxDscToMint/2);
+
+        // 
+
+        // Redeem collateral
+        uint256 amountToRedeem = AMOUNT_COLLATERAL / 5;
+        dscEngine.redeemCollateral(weth, amountToRedeem);
+
+        // Burn DSC
+        uint256 amountToBurn = maxDscToMint / 2;
+        DecentralizedStableCoin(dsc).approve(address(dscEngine), amountToBurn);
+        dscEngine.burnDsc(amountToBurn);
+
+        vm.stopPrank();
+    }
+
+     ////////////////////////////
+    ///// liquidate user //////
+   //////////////////////////
+
+   function testRevertIfLiquidateWithZeroAmount() public {
+        vm.startPrank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__AmountMustBeAboveZero.selector);
+        dscEngine.liquidate(USER, weth, 0);
+        vm.stopPrank();
+    }
+
+    function testRevertIfLiquidateUnapprovedCollateral() public {
+        vm.startPrank(USER);
+        ERC20Mock unapprovedToken = new ERC20Mock("unapproved", "UNAPPROVED", USER, AMOUNT_COLLATERAL);
+        uint256 amountToLiquidate = 1 ether;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__NotAllowedToken.selector, address(unapprovedToken)));
+        dscEngine.liquidate( address(unapprovedToken),USER, amountToLiquidate);
+        vm.stopPrank();
+    }
 
 }

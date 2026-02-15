@@ -166,6 +166,7 @@ contract DSCEngine is ReentrancyGuard {
     ) 
         external 
         moreThanZero(debtToCover)
+        isAllowedToken(collateral)
         nonReentrant
         {
             uint256 userHealthFactor = _healthFactor(user);
