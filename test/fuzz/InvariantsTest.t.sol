@@ -6,7 +6,7 @@ pragma solidity ^0.8.18;
 // 1) the total supply of DSC should be less than the total value of collateral
 // 2) Getter view functions should not revert
 
-import {Test,console} from "forge-std/Test.sol";
+import {Test,console2} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {DeployDSC} from "../../script/DeployDSC.s.sol";
 import {DSCEngine} from "../../src/DSCEngine.sol";
@@ -41,11 +41,19 @@ contract InvariantsTest is StdInvariant,Test {
         uint256 wethValue = dsce.getUsdValue(weth, totalWethDeposited);
         uint256 wbtcValue = dsce.getUsdValue(wbtc, totalWbtcDeposited);
 
-        console.log("total supply",totalSupply);
+        console2.log("total supply",totalSupply);
 
         uint256 totalCollateralValue = wethValue + wbtcValue;
 
         assert(totalCollateralValue >= totalSupply);
+        console2.log("mint called",handler.timesMintIsCalled());
+    }
+
+    function invariant_getterFunctionsShouldNotRevert() public view {
+        dsce.getCollateralTokens();
+        dsce.getLiquidationBonus();
+        dsce.getLiuidationThreshold();
+        dsce.getDsc();
     }
 
 
