@@ -251,13 +251,7 @@ contract DSCEngine is ReentrancyGuard {
             uint256 totalDscMinted,
             uint256 collateralValueInUsd
         ) = _getAccountInformation(user);
-        if (totalDscMinted == 0) {
-            return type(uint256).max;
-        }
-        uint256 adjustedCollateralValue = (collateralValueInUsd *
-            LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-
-        return (adjustedCollateralValue * PRECISION) / totalDscMinted;
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
@@ -299,6 +293,10 @@ contract DSCEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
+    function calculateHealthFactor(uint256 totalDscMinted, uint256 collateralValueInUsd) external pure returns (uint256) {
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
+    }
+
     function getUsdValue(
         address token,
         uint256 amount
@@ -311,11 +309,34 @@ contract DSCEngine is ReentrancyGuard {
         return ((uint256(price) * amount) / (10 ** decimals));
     }
 
+    function _calculateHealthFactor(uint256 totalDscMinted, uint256 collateralValueInUsd) internal pure  returns (uint256) {
+        if (totalDscMinted == 0) {
+            return type(uint256).max;
+        }
+        uint256 adjustedCollateralValue = (collateralValueInUsd *
+            LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+
+        return (adjustedCollateralValue * PRECISION) / totalDscMinted;
+        
+    }
+
     function getAccountInformation(address user) external view returns (uint256 totalDscMinted, uint256 collateralValueInUsd) {
         (totalDscMinted,collateralValueInUsd) = _getAccountInformation(user);
     }
 
     function getLiuidationThreshold() external pure returns (uint256) {
         return LIQUIDATION_THRESHOLD;
+    }
+
+    function getLiquidationBonus() external pure returns(uint256){
+        return LIQUIDATION_BONUS;
+    }
+
+    function getCollateralTokens() external view returns (address[] memory){
+        return s_collateralTokens;
+    }
+
+    function getCollateralBalanceOfUser(address user,address token) external view returns(uint256){
+        return s_collateralDeposited[user][token];
     }
 }
