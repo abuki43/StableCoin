@@ -6,6 +6,8 @@ import {ReentrancyGuard} from '@openzeppelin/contracts/security/ReentrancyGuard.
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {AggregatorV3Interface} from '@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol';
+import {OracleLib} from './libraries/OracleLib.sol';
+
 
 contract DSCEngine is ReentrancyGuard {
     error DSCEngine__AmountMustBeAboveZero();
@@ -16,6 +18,8 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__MintFailed();
     error DSCEngine__HealthFactorOK();
     error DSCEngine__HealthFactorNotImproved();
+
+    using OracleLib for AggregatorV3Interface;
 
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% overcollateralized
@@ -268,7 +272,7 @@ contract DSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(
             s_priceFeeds[token]
         );
-        (, int256 price, , , ) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.staleCheckLatestRoundData();
         uint8 decimals = priceFeed.decimals();
         return ((usdAmount * (10 ** decimals)) / uint256(price));
     }
@@ -304,7 +308,7 @@ contract DSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(
             s_priceFeeds[token]
         );
-        (, int256 price, , , ) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.staleCheckLatestRoundData();
         uint8 decimals = priceFeed.decimals();
         return ((uint256(price) * amount) / (10 ** decimals));
     }
